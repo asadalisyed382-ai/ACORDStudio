@@ -1,9 +1,11 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>PDF Editor</title>
+  <title>ACORD PDF Editor Pro</title>
 
   <style>
+    body { font-family: Arial; }
+
     #container {
       position: relative;
       display: inline-block;
@@ -19,18 +21,30 @@
       font-size: 16px;
     }
 
-    input {
+    input.edit {
       position: absolute;
+      border: 1px solid blue;
     }
   </style>
 </head>
 
 <body>
 
-<h2>PDF Editor</h2>
+<h2>PDF Editor (Working Version)</h2>
 
 <input type="file" id="fileInput">
-<button onclick="downloadPDF()">Download</button>
+<button onclick="downloadPDF()">Download PDF</button>
+<button onclick="printPDF()">Print</button>
+<button onclick="saveSession()">Save Work</button>
+<button onclick="loadSession()">Load Work</button>
+
+<br><br>
+
+<h3>Client Auto Fill</h3>
+<input id="clientName" placeholder="Client Name">
+<input id="policy" placeholder="Policy #">
+<button onclick="saveClient()">Save Client</button>
+<button onclick="loadClient()">Load Client</button>
 
 <br><br>
 
@@ -49,6 +63,7 @@ let container = document.getElementById("container");
 let pdfFile = null;
 let textItems = [];
 
+// LOAD PDF
 document.getElementById("fileInput").addEventListener("change", async function(e) {
   pdfFile = e.target.files[0];
   const buffer = await pdfFile.arrayBuffer();
@@ -63,14 +78,21 @@ document.getElementById("fileInput").addEventListener("change", async function(e
   await page.render({ canvasContext: ctx, viewport }).promise;
 });
 
+// CLICK TO TYPE
 canvas.addEventListener("click", function(e) {
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
 
+  createInput(x, y, "");
+});
+
+function createInput(x, y, value) {
   let input = document.createElement("input");
+  input.className = "edit";
   input.style.left = x + "px";
   input.style.top = y + "px";
+  input.value = value;
 
   container.appendChild(input);
   input.focus();
@@ -81,8 +103,9 @@ canvas.addEventListener("click", function(e) {
     }
     input.remove();
   };
-});
+}
 
+// CREATE TEXT
 function createText(text, x, y) {
   let div = document.createElement("div");
   div.className = "text";
@@ -95,6 +118,7 @@ function createText(text, x, y) {
   let item = { text, x, y, el: div };
   textItems.push(item);
 
+  // DRAG
   div.onmousedown = function(e) {
     let offsetX = e.offsetX;
     let offsetY = e.offsetY;
@@ -115,13 +139,25 @@ function createText(text, x, y) {
       document.onmousemove = null;
     };
   };
+
+  // EDIT
+  div.ondblclick = () => {
+    createInput(item.x, item.y, item.text);
+    div.remove();
+    textItems = textItems.filter(t => t !== item);
+  };
+
+  // DELETE
+  div.oncontextmenu = (e) => {
+    e.preventDefault();
+    div.remove();
+    textItems = textItems.filter(t => t !== item);
+  };
 }
 
+// DOWNLOAD FIXED
 async function downloadPDF() {
-  if (!pdfFile) {
-    alert("Upload PDF first");
-    return;
-  }
+  if (!pdfFile) return alert("Upload PDF first");
 
   const { PDFDocument, rgb } = PDFLib;
 
@@ -134,17 +170,63 @@ async function downloadPDF() {
       x: item.x,
       y: page.getHeight() - item.y,
       size: 12,
-      color: rgb(0, 0, 0)
+      color: rgb(0,0,0)
     });
   });
 
-  const newPdf = await pdfDoc.save();
+  const pdfBytes = await pdfDoc.save();
 
-  let blob = new Blob([newPdf], { type: "application/pdf" });
-  let link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = "edited.pdf";
-  link.click();
+  const blob = new Blob([pdfBytes], { type: "application/pdf" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "edited.pdf";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// PRINT
+function printPDF() {
+  const canvasImage = canvas.toDataURL();
+  const win = window.open("");
+  win.document.write("<img src='" + canvasImage + "' style='width:100%'>");
+  win.print();
+}
+
+// SAVE SESSION
+function saveSession() {
+  localStorage.setItem("pdfData", JSON.stringify(textItems));
+  alert("Saved!");
+}
+
+// LOAD SESSION
+function loadSession() {
+  const data = JSON.parse(localStorage.getItem("pdfData") || "[]");
+
+  data.forEach(item => {
+    createText(item.text, item.x, item.y);
+  });
+}
+
+// CLIENT SAVE
+function saveClient() {
+  const data = {
+    name: document.getElementById("clientName").value,
+    policy: document.getElementById("policy").value
+  };
+
+  localStorage.setItem("client", JSON.stringify(data));
+  alert("Client Saved");
+}
+
+// CLIENT LOAD
+function loadClient() {
+  const data = JSON.parse(localStorage.getItem("client") || "{}");
+
+  document.getElementById("clientName").value = data.name || "";
+  document.getElementById("policy").value = data.policy || "";
 }
 </script>
 
