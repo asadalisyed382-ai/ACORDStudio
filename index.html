@@ -1,23 +1,39 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>ACORD PDF Editor</title>
+  <title>ACORD PDF Editor Pro</title>
+  <style>
+    canvas { border:1px solid black; }
+    #textBox {
+      position:absolute;
+      display:none;
+      border:1px solid blue;
+    }
+  </style>
 </head>
 <body>
 
-<h2>Upload PDF</h2>
-<input type="file" id="fileInput">
+<h2>ACORD PDF Editor</h2>
 
+<input type="file" id="fileInput">
 <br><br>
 
 <canvas id="pdfCanvas"></canvas>
+<input type="text" id="textBox">
 
 <br><br>
 
-<input type="text" id="textInput" placeholder="Enter text">
-<button onclick="addText()">Add Text</button>
-
 <button onclick="downloadPDF()">Download PDF</button>
+<button onclick="saveSession()">Save Work</button>
+<button onclick="loadSession()">Load Work</button>
+
+<br><br>
+
+<h3>Client Auto-Fill</h3>
+<input id="clientName" placeholder="Client Name">
+<input id="policy" placeholder="Policy #">
+<button onclick="saveClient()">Save Client</button>
+<button onclick="loadClient()">Load Client</button>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
 <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
@@ -25,7 +41,13 @@
 <script>
 let pdfDoc = null;
 let page = null;
+let canvas = document.getElementById("pdfCanvas");
+let ctx = canvas.getContext("2d");
+let textBox = document.getElementById("textBox");
 let textItems = [];
+
+let currentX = 0;
+let currentY = 0;
 
 document.getElementById("fileInput").addEventListener("change", async function(e) {
   const file = e.target.files[0];
@@ -35,25 +57,35 @@ document.getElementById("fileInput").addEventListener("change", async function(e
   page = await pdfDoc.getPage(1);
 
   const viewport = page.getViewport({ scale: 1.5 });
-  const canvas = document.getElementById("pdfCanvas");
-  const context = canvas.getContext("2d");
-
   canvas.height = viewport.height;
   canvas.width = viewport.width;
 
-  await page.render({
-    canvasContext: context,
-    viewport: viewport
-  }).promise;
+  await page.render({ canvasContext: ctx, viewport }).promise;
 });
 
-function addText() {
-  const text = document.getElementById("textInput").value;
-  textItems.push({ text, x: 100, y: 100 + textItems.length * 30 });
+canvas.addEventListener("click", function(e) {
+  const rect = canvas.getBoundingClientRect();
+  currentX = e.clientX - rect.left;
+  currentY = e.clientY - rect.top;
 
-  const ctx = document.getElementById("pdfCanvas").getContext("2d");
-  ctx.fillText(text, 100, 100 + textItems.length * 30);
-}
+  textBox.style.left = currentX + "px";
+  textBox.style.top = currentY + "px";
+  textBox.style.display = "block";
+  textBox.focus();
+});
+
+textBox.addEventListener("keydown", function(e) {
+  if (e.key === "Enter") {
+    const text = textBox.value;
+
+    textItems.push({ text, x: currentX, y: currentY });
+
+    ctx.fillText(text, currentX, currentY);
+
+    textBox.value = "";
+    textBox.style.display = "none";
+  }
+});
 
 async function downloadPDF() {
   const { PDFDocument, rgb } = PDFLib;
@@ -80,6 +112,37 @@ async function downloadPDF() {
   link.href = URL.createObjectURL(blob);
   link.download = "edited.pdf";
   link.click();
+}
+
+function saveSession() {
+  localStorage.setItem("pdfEdits", JSON.stringify(textItems));
+  alert("Work saved!");
+}
+
+function loadSession() {
+  const saved = JSON.parse(localStorage.getItem("pdfEdits") || "[]");
+  textItems = saved;
+
+  saved.forEach(item => {
+    ctx.fillText(item.text, item.x, item.y);
+  });
+}
+
+function saveClient() {
+  const data = {
+    name: document.getElementById("clientName").value,
+    policy: document.getElementById("policy").value
+  };
+
+  localStorage.setItem("clientData", JSON.stringify(data));
+  alert("Client saved!");
+}
+
+function loadClient() {
+  const data = JSON.parse(localStorage.getItem("clientData") || "{}");
+
+  document.getElementById("clientName").value = data.name || "";
+  document.getElementById("policy").value = data.policy || "";
 }
 </script>
 
