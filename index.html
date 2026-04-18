@@ -1,46 +1,85 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>PDF Editor</title>
+  <title>ACORD PDF Editor</title>
 </head>
 <body>
 
 <h2>Upload PDF</h2>
 <input type="file" id="fileInput">
-<button onclick="uploadPDF()">Upload</button>
 
 <br><br>
 
-<iframe id="pdfFrame" width="600" height="800"></iframe>
+<canvas id="pdfCanvas"></canvas>
 
 <br><br>
 
-<input type="text" id="textInput" placeholder="Type here">
+<input type="text" id="textInput" placeholder="Enter text">
 <button onclick="addText()">Add Text</button>
 
+<button onclick="downloadPDF()">Download PDF</button>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+<script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+
 <script>
-let currentPDF = "";
+let pdfDoc = null;
+let page = null;
+let textItems = [];
 
-function uploadPDF() {
-  let file = document.getElementById("fileInput").files[0];
-  let formData = new FormData();
-  formData.append("pdf", file);
+document.getElementById("fileInput").addEventListener("change", async function(e) {
+  const file = e.target.files[0];
+  const arrayBuffer = await file.arrayBuffer();
 
-  fetch("http://localhost:3000/upload", {
-    method: "POST",
-    body: formData
-  })
-  .then(res => res.json())
-  .then(data => {
-    currentPDF = data.file;
-    document.getElementById("pdfFrame").src =
-      "http://localhost:3000/uploads/" + currentPDF;
-  });
-}
+  pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  page = await pdfDoc.getPage(1);
+
+  const viewport = page.getViewport({ scale: 1.5 });
+  const canvas = document.getElementById("pdfCanvas");
+  const context = canvas.getContext("2d");
+
+  canvas.height = viewport.height;
+  canvas.width = viewport.width;
+
+  await page.render({
+    canvasContext: context,
+    viewport: viewport
+  }).promise;
+});
 
 function addText() {
-  let text = document.getElementById("textInput").value;
-  alert("Text added: " + text + "\n(Next version will place it on PDF)");
+  const text = document.getElementById("textInput").value;
+  textItems.push({ text, x: 100, y: 100 + textItems.length * 30 });
+
+  const ctx = document.getElementById("pdfCanvas").getContext("2d");
+  ctx.fillText(text, 100, 100 + textItems.length * 30);
+}
+
+async function downloadPDF() {
+  const { PDFDocument, rgb } = PDFLib;
+
+  const file = document.getElementById("fileInput").files[0];
+  const bytes = await file.arrayBuffer();
+
+  const pdfDoc = await PDFDocument.load(bytes);
+  const page = pdfDoc.getPages()[0];
+
+  textItems.forEach(item => {
+    page.drawText(item.text, {
+      x: item.x,
+      y: page.getHeight() - item.y,
+      size: 12,
+      color: rgb(0, 0, 0),
+    });
+  });
+
+  const pdfBytes = await pdfDoc.save();
+
+  const blob = new Blob([pdfBytes], { type: "application/pdf" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "edited.pdf";
+  link.click();
 }
 </script>
 
