@@ -1,40 +1,3 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <title>ACORD PDF Editor Pro</title>
-  <style>
-    canvas { border:1px solid black; }
-    #textBox {
-      position:absolute;
-      display:none;
-      border:1px solid blue;
-    }
-  </style>
-</head>
-<body>
-
-<h2>ACORD PDF Editor</h2>
-
-<input type="file" id="fileInput">
-<br><br>
-
-<canvas id="pdfCanvas"></canvas>
-<input type="text" id="textBox">
-
-<br><br>
-
-<button onclick="downloadPDF()">Download PDF</button>
-<button onclick="saveSession()">Save Work</button>
-<button onclick="loadSession()">Load Work</button>
-
-<br><br>
-
-<h3>Client Auto-Fill</h3>
-<input id="clientName" placeholder="Client Name">
-<input id="policy" placeholder="Policy #">
-<button onclick="saveClient()">Save Client</button>
-<button onclick="loadClient()">Load Client</button>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
 <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
 
@@ -43,11 +6,9 @@ let pdfDoc = null;
 let page = null;
 let canvas = document.getElementById("pdfCanvas");
 let ctx = canvas.getContext("2d");
-let textBox = document.getElementById("textBox");
-let textItems = [];
 
-let currentX = 0;
-let currentY = 0;
+let textItems = [];
+let activeText = null;
 
 document.getElementById("fileInput").addEventListener("change", async function(e) {
   const file = e.target.files[0];
@@ -61,32 +22,61 @@ document.getElementById("fileInput").addEventListener("change", async function(e
   canvas.width = viewport.width;
 
   await page.render({ canvasContext: ctx, viewport }).promise;
+
+  drawTexts();
 });
 
+// CLICK TO ADD TEXT BOX
 canvas.addEventListener("click", function(e) {
   const rect = canvas.getBoundingClientRect();
-  currentX = e.clientX - rect.left;
-  currentY = e.clientY - rect.top;
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
 
-  textBox.style.left = currentX + "px";
-  textBox.style.top = currentY + "px";
-  textBox.style.display = "block";
-  textBox.focus();
+  createEditableText(x, y, "");
 });
 
-textBox.addEventListener("keydown", function(e) {
-  if (e.key === "Enter") {
-    const text = textBox.value;
+// CREATE EDITABLE TEXT INPUT ON CANVAS
+function createEditableText(x, y, value) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = value;
+  input.style.position = "absolute";
+  input.style.left = x + "px";
+  input.style.top = y + "px";
+  input.style.fontSize = "16px";
+  input.style.border = "1px solid blue";
+  input.style.background = "transparent";
 
-    textItems.push({ text, x: currentX, y: currentY });
+  document.body.appendChild(input);
+  input.focus();
 
-    ctx.fillText(text, currentX, currentY);
+  input.onblur = () => {
+    const text = input.value;
+    if (text.trim() !== "") {
+      textItems.push({ text, x, y });
+      drawTexts();
+    }
+    document.body.removeChild(input);
+  };
+}
 
-    textBox.value = "";
-    textBox.style.display = "none";
-  }
-});
+// DRAW ALL TEXTS
+function drawTexts() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  page.render({
+    canvasContext: ctx,
+    viewport: page.getViewport({ scale: 1.5 })
+  });
 
+  ctx.font = "16px Arial";
+  ctx.fillStyle = "black";
+
+  textItems.forEach(item => {
+    ctx.fillText(item.text, item.x, item.y);
+  });
+}
+
+// SAVE PDF
 async function downloadPDF() {
   const { PDFDocument, rgb } = PDFLib;
 
@@ -114,37 +104,15 @@ async function downloadPDF() {
   link.click();
 }
 
+// SAVE SESSION
 function saveSession() {
   localStorage.setItem("pdfEdits", JSON.stringify(textItems));
-  alert("Work saved!");
+  alert("Saved!");
 }
 
+// LOAD SESSION
 function loadSession() {
-  const saved = JSON.parse(localStorage.getItem("pdfEdits") || "[]");
-  textItems = saved;
-
-  saved.forEach(item => {
-    ctx.fillText(item.text, item.x, item.y);
-  });
-}
-
-function saveClient() {
-  const data = {
-    name: document.getElementById("clientName").value,
-    policy: document.getElementById("policy").value
-  };
-
-  localStorage.setItem("clientData", JSON.stringify(data));
-  alert("Client saved!");
-}
-
-function loadClient() {
-  const data = JSON.parse(localStorage.getItem("clientData") || "{}");
-
-  document.getElementById("clientName").value = data.name || "";
-  document.getElementById("policy").value = data.policy || "";
+  textItems = JSON.parse(localStorage.getItem("pdfEdits") || "[]");
+  drawTexts();
 }
 </script>
-
-</body>
-</html>
