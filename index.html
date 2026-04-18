@@ -1,12 +1,10 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>ACORD PDF Editor Pro</title>
+  <title>PDF Editor</title>
 
   <style>
-    body { font-family: Arial; }
-
-    #pdfContainer {
+    #container {
       position: relative;
       display: inline-block;
     }
@@ -15,33 +13,28 @@
       border: 1px solid black;
     }
 
-    .text-item {
+    .text {
       position: absolute;
-      font-size: 16px;
       cursor: move;
-      user-select: none;
+      font-size: 16px;
     }
 
-    input.edit-box {
+    input {
       position: absolute;
-      font-size: 16px;
-      border: 1px solid blue;
     }
   </style>
 </head>
 
 <body>
 
-<h2>ACORD PDF Editor (Adobe Style)</h2>
+<h2>PDF Editor</h2>
 
 <input type="file" id="fileInput">
-<button onclick="downloadPDF()">Download PDF</button>
-<button onclick="saveSession()">Save Work</button>
-<button onclick="loadSession()">Load Work</button>
+<button onclick="downloadPDF()">Download</button>
 
 <br><br>
 
-<div id="pdfContainer">
+<div id="container">
   <canvas id="pdfCanvas"></canvas>
 </div>
 
@@ -49,105 +42,73 @@
 <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
 
 <script>
-let pdfDoc = null;
-let page = null;
 let canvas = document.getElementById("pdfCanvas");
 let ctx = canvas.getContext("2d");
-let container = document.getElementById("pdfContainer");
+let container = document.getElementById("container");
 
+let pdfFile = null;
 let textItems = [];
 
-// LOAD PDF
 document.getElementById("fileInput").addEventListener("change", async function(e) {
-  const file = e.target.files[0];
-  const buffer = await file.arrayBuffer();
+  pdfFile = e.target.files[0];
+  const buffer = await pdfFile.arrayBuffer();
 
-  pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
-  page = await pdfDoc.getPage(1);
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const page = await pdf.getPage(1);
 
   const viewport = page.getViewport({ scale: 1.5 });
-  canvas.height = viewport.height;
   canvas.width = viewport.width;
+  canvas.height = viewport.height;
 
   await page.render({ canvasContext: ctx, viewport }).promise;
 });
 
-// CLICK TO ADD TEXT
 canvas.addEventListener("click", function(e) {
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
 
-  createInput(x, y, "");
-});
-
-// CREATE INPUT BOX
-function createInput(x, y, value) {
-  const input = document.createElement("input");
-  input.className = "edit-box";
+  let input = document.createElement("input");
   input.style.left = x + "px";
   input.style.top = y + "px";
-  input.value = value;
 
   container.appendChild(input);
   input.focus();
 
-  input.onblur = () => {
-    if (input.value.trim() !== "") {
+  input.onblur = function() {
+    if (input.value !== "") {
       createText(input.value, x, y);
     }
     input.remove();
   };
-}
+});
 
-// CREATE TEXT DIV
 function createText(text, x, y) {
-  const div = document.createElement("div");
-  div.className = "text-item";
+  let div = document.createElement("div");
+  div.className = "text";
   div.innerText = text;
   div.style.left = x + "px";
   div.style.top = y + "px";
 
   container.appendChild(div);
 
-  const item = { text, x, y, el: div };
+  let item = { text, x, y, el: div };
   textItems.push(item);
 
-  enableDrag(div, item);
-
-  // DOUBLE CLICK TO EDIT
-  div.ondblclick = () => {
-    createInput(item.x, item.y, item.text);
-    div.remove();
-    textItems = textItems.filter(t => t !== item);
-  };
-
-  // RIGHT CLICK DELETE
-  div.oncontextmenu = (e) => {
-    e.preventDefault();
-    div.remove();
-    textItems = textItems.filter(t => t !== item);
-  };
-}
-
-// DRAG FUNCTION
-function enableDrag(el, item) {
-  let offsetX, offsetY;
-
-  el.onmousedown = function(e) {
-    offsetX = e.offsetX;
-    offsetY = e.offsetY;
+  div.onmousedown = function(e) {
+    let offsetX = e.offsetX;
+    let offsetY = e.offsetY;
 
     document.onmousemove = function(e) {
       const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left - offsetX;
-      const y = e.clientY - rect.top - offsetY;
+      let newX = e.clientX - rect.left - offsetX;
+      let newY = e.clientY - rect.top - offsetY;
 
-      el.style.left = x + "px";
-      el.style.top = y + "px";
+      div.style.left = newX + "px";
+      div.style.top = newY + "px";
 
-      item.x = x;
-      item.y = y;
+      item.x = newX;
+      item.y = newY;
     };
 
     document.onmouseup = function() {
@@ -156,14 +117,15 @@ function enableDrag(el, item) {
   };
 }
 
-// DOWNLOAD PDF
 async function downloadPDF() {
+  if (!pdfFile) {
+    alert("Upload PDF first");
+    return;
+  }
+
   const { PDFDocument, rgb } = PDFLib;
 
-  const file = document.getElementById("fileInput").files[0];
-  if (!file) return alert("Upload PDF first");
-
-  const bytes = await file.arrayBuffer();
+  const bytes = await pdfFile.arrayBuffer();
   const pdfDoc = await PDFDocument.load(bytes);
   const page = pdfDoc.getPages()[0];
 
@@ -176,34 +138,13 @@ async function downloadPDF() {
     });
   });
 
-  const pdfBytes = await pdfDoc.save();
+  const newPdf = await pdfDoc.save();
 
-  const blob = new Blob([pdfBytes], { type: "application/pdf" });
-  const link = document.createElement("a");
+  let blob = new Blob([newPdf], { type: "application/pdf" });
+  let link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
   link.download = "edited.pdf";
   link.click();
-}
-
-// SAVE SESSION
-function saveSession() {
-  const clean = textItems.map(t => ({
-    text: t.text,
-    x: t.x,
-    y: t.y
-  }));
-
-  localStorage.setItem("pdfSession", JSON.stringify(clean));
-  alert("Saved!");
-}
-
-// LOAD SESSION
-function loadSession() {
-  const saved = JSON.parse(localStorage.getItem("pdfSession") || "[]");
-
-  saved.forEach(item => {
-    createText(item.text, item.x, item.y);
-  });
 }
 </script>
 
