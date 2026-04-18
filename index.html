@@ -1,3 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ACORD PDF Editor Pro</title>
+
+  <style>
+    body { font-family: Arial; }
+
+    #pdfContainer {
+      position: relative;
+      display: inline-block;
+    }
+
+    canvas {
+      border: 1px solid black;
+    }
+
+    .text-item {
+      position: absolute;
+      font-size: 16px;
+      cursor: move;
+      user-select: none;
+    }
+
+    input.edit-box {
+      position: absolute;
+      font-size: 16px;
+      border: 1px solid blue;
+    }
+  </style>
+</head>
+
+<body>
+
+<h2>ACORD PDF Editor (Adobe Style)</h2>
+
+<input type="file" id="fileInput">
+<button onclick="downloadPDF()">Download PDF</button>
+<button onclick="saveSession()">Save Work</button>
+<button onclick="loadSession()">Load Work</button>
+
+<br><br>
+
+<div id="pdfContainer">
+  <canvas id="pdfCanvas"></canvas>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
 <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
 
@@ -6,15 +53,16 @@ let pdfDoc = null;
 let page = null;
 let canvas = document.getElementById("pdfCanvas");
 let ctx = canvas.getContext("2d");
+let container = document.getElementById("pdfContainer");
 
 let textItems = [];
-let activeText = null;
 
+// LOAD PDF
 document.getElementById("fileInput").addEventListener("change", async function(e) {
   const file = e.target.files[0];
-  const arrayBuffer = await file.arrayBuffer();
+  const buffer = await file.arrayBuffer();
 
-  pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
   page = await pdfDoc.getPage(1);
 
   const viewport = page.getViewport({ scale: 1.5 });
@@ -22,67 +70,100 @@ document.getElementById("fileInput").addEventListener("change", async function(e
   canvas.width = viewport.width;
 
   await page.render({ canvasContext: ctx, viewport }).promise;
-
-  drawTexts();
 });
 
-// CLICK TO ADD TEXT BOX
+// CLICK TO ADD TEXT
 canvas.addEventListener("click", function(e) {
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
 
-  createEditableText(x, y, "");
+  createInput(x, y, "");
 });
 
-// CREATE EDITABLE TEXT INPUT ON CANVAS
-function createEditableText(x, y, value) {
+// CREATE INPUT BOX
+function createInput(x, y, value) {
   const input = document.createElement("input");
-  input.type = "text";
-  input.value = value;
-  input.style.position = "absolute";
+  input.className = "edit-box";
   input.style.left = x + "px";
   input.style.top = y + "px";
-  input.style.fontSize = "16px";
-  input.style.border = "1px solid blue";
-  input.style.background = "transparent";
+  input.value = value;
 
-  document.body.appendChild(input);
+  container.appendChild(input);
   input.focus();
 
   input.onblur = () => {
-    const text = input.value;
-    if (text.trim() !== "") {
-      textItems.push({ text, x, y });
-      drawTexts();
+    if (input.value.trim() !== "") {
+      createText(input.value, x, y);
     }
-    document.body.removeChild(input);
+    input.remove();
   };
 }
 
-// DRAW ALL TEXTS
-function drawTexts() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  page.render({
-    canvasContext: ctx,
-    viewport: page.getViewport({ scale: 1.5 })
-  });
+// CREATE TEXT DIV
+function createText(text, x, y) {
+  const div = document.createElement("div");
+  div.className = "text-item";
+  div.innerText = text;
+  div.style.left = x + "px";
+  div.style.top = y + "px";
 
-  ctx.font = "16px Arial";
-  ctx.fillStyle = "black";
+  container.appendChild(div);
 
-  textItems.forEach(item => {
-    ctx.fillText(item.text, item.x, item.y);
-  });
+  const item = { text, x, y, el: div };
+  textItems.push(item);
+
+  enableDrag(div, item);
+
+  // DOUBLE CLICK TO EDIT
+  div.ondblclick = () => {
+    createInput(item.x, item.y, item.text);
+    div.remove();
+    textItems = textItems.filter(t => t !== item);
+  };
+
+  // RIGHT CLICK DELETE
+  div.oncontextmenu = (e) => {
+    e.preventDefault();
+    div.remove();
+    textItems = textItems.filter(t => t !== item);
+  };
 }
 
-// SAVE PDF
+// DRAG FUNCTION
+function enableDrag(el, item) {
+  let offsetX, offsetY;
+
+  el.onmousedown = function(e) {
+    offsetX = e.offsetX;
+    offsetY = e.offsetY;
+
+    document.onmousemove = function(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left - offsetX;
+      const y = e.clientY - rect.top - offsetY;
+
+      el.style.left = x + "px";
+      el.style.top = y + "px";
+
+      item.x = x;
+      item.y = y;
+    };
+
+    document.onmouseup = function() {
+      document.onmousemove = null;
+    };
+  };
+}
+
+// DOWNLOAD PDF
 async function downloadPDF() {
   const { PDFDocument, rgb } = PDFLib;
 
   const file = document.getElementById("fileInput").files[0];
-  const bytes = await file.arrayBuffer();
+  if (!file) return alert("Upload PDF first");
 
+  const bytes = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(bytes);
   const page = pdfDoc.getPages()[0];
 
@@ -91,7 +172,7 @@ async function downloadPDF() {
       x: item.x,
       y: page.getHeight() - item.y,
       size: 12,
-      color: rgb(0, 0, 0),
+      color: rgb(0, 0, 0)
     });
   });
 
@@ -106,13 +187,25 @@ async function downloadPDF() {
 
 // SAVE SESSION
 function saveSession() {
-  localStorage.setItem("pdfEdits", JSON.stringify(textItems));
+  const clean = textItems.map(t => ({
+    text: t.text,
+    x: t.x,
+    y: t.y
+  }));
+
+  localStorage.setItem("pdfSession", JSON.stringify(clean));
   alert("Saved!");
 }
 
 // LOAD SESSION
 function loadSession() {
-  textItems = JSON.parse(localStorage.getItem("pdfEdits") || "[]");
-  drawTexts();
+  const saved = JSON.parse(localStorage.getItem("pdfSession") || "[]");
+
+  saved.forEach(item => {
+    createText(item.text, item.x, item.y);
+  });
 }
 </script>
+
+</body>
+</html>
