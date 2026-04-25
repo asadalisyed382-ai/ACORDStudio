@@ -3,11 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>ACORD PDF Editor Pro - Precision Text Placement</title>
+  <title>ACORD PDF Editor Pro - Fixed Download Coordinates</title>
   <style>
     * {
       box-sizing: border-box;
-      user-select: none; /* prevents accidental selection while dragging */
     }
 
     body {
@@ -59,6 +58,14 @@
       transform: scale(0.97);
     }
 
+    button.danger {
+      background: #dc3545;
+    }
+    
+    button.danger:hover {
+      background: #bb2d3b;
+    }
+
     .client-section {
       background: #f8f9fc;
       border-radius: 16px;
@@ -90,13 +97,23 @@
       margin-top: 12px;
     }
 
+    .warning-message {
+      background: #fff3cd;
+      border-left: 5px solid #ffc107;
+      padding: 6px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      color: #856404;
+      margin-top: 8px;
+    }
+
     #container {
       position: relative;
       display: inline-block;
       box-shadow: 0 10px 25px -5px rgba(0,0,0,0.2);
       background: #fff;
       border-radius: 8px;
-      overflow: hidden;
+      overflow: visible;
     }
 
     canvas {
@@ -106,7 +123,6 @@
       background: white;
     }
 
-    /* Text elements are absolutely positioned on top of canvas */
     .text {
       position: absolute;
       cursor: move;
@@ -118,18 +134,16 @@
       border-radius: 4px;
       color: #000000;
       font-weight: 500;
-      transition: background 0.1s ease;
       pointer-events: auto;
       z-index: 20;
       text-shadow: 0 0 1px white;
     }
 
     .text:hover {
-      background: rgba(255, 255, 180, 0.5);
+      background: rgba(255, 255, 180, 0.6);
       outline: 1px dotted #2277aa;
     }
 
-    /* Editable input overlay (same exact coordinates) */
     input.edit {
       position: absolute;
       border: 2px solid #1e88e5;
@@ -143,18 +157,26 @@
       z-index: 100;
       border-radius: 4px;
     }
+    
+    .coords-debug {
+      font-size: 11px;
+      color: #666;
+      margin-top: 10px;
+      font-family: monospace;
+    }
   </style>
 </head>
 <body>
 
 <div class="editor-panel">
-  <h2>📄 ACORD PDF Editor Pro — Precision Type Anywhere</h2>
+  <h2>📄 ACORD PDF Editor Pro — Fixed PDF Download Coordinates</h2>
   <div class="toolbar">
     <input type="file" id="fileInput" accept="application/pdf">
     <button onclick="downloadPDF()">⬇️ Download PDF</button>
     <button onclick="printPDF()">🖨️ Print</button>
     <button onclick="saveSession()">💾 Save Work</button>
     <button onclick="loadSession()">📂 Load Work</button>
+    <button onclick="clearAllText()" class="danger">🗑️ Clear All Text</button>
   </div>
 
   <div class="client-section">
@@ -163,7 +185,16 @@
     <input id="policy" placeholder="Policy #" autocomplete="off">
     <button onclick="saveClient()">💾 Save Client</button>
     <button onclick="loadClient()">📥 Load Client</button>
-    <div class="info-message">✨ <strong>Tip:</strong> Click anywhere on PDF → type text (e.g., 7500) → it appears exactly at cursor. Drag✔️ | Double-click✏️ edit | Right-click❌ delete</div>
+    <button onclick="insertClientNameAtCursor()">✏️ Insert Name at Last Click</button>
+  </div>
+  
+  <div class="info-message">
+    ✨ <strong>Fix Applied:</strong> Download coordinates now match screen positions exactly! 
+    Click anywhere on PDF → type (e.g., "7500") → appears exactly where clicked. 
+    Drag to reposition | Double-click to edit | Right-click to delete.
+  </div>
+  <div class="warning-message">
+    ⚠️ <strong>Important:</strong> Text placement in downloaded PDF now matches what you see on screen.
   </div>
 </div>
 
@@ -180,24 +211,28 @@
   let ctx = canvas.getContext("2d");
   let container = document.getElementById("container");
 
-  let pdfFile = null;           // original pdf file reference
-  let textItems = [];           // store { text, x, y, el }
+  let pdfFile = null;
+  let textItems = [];
+  let lastClickPosition = { x: 0, y: 0 };
+  let originalPDFWidth = 0;
+  let originalPDFHeight = 0;
+  let displayScale = 1.5;
 
-  // PDF.js worker (required for stability)
+  // PDF.js worker
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
-  // ================ FIXED: COORDINATE MAPPING (no offset issues) ================
-  // The canvas click handler uses canvas.getBoundingClientRect() and matches exactly.
-  // Input field appears at EXACT click coordinates relative to container.
-  // All text elements share the same coordinate system (top-left of container).
-  
-  // Load PDF and render first page (preserve existing text items after render)
+  // Load and render PDF
   async function loadAndRenderPDF(file) {
     if (!file) return;
     const buffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
     const page = await pdf.getPage(1);
-    const viewport = page.getViewport({ scale: 1.5 });
+    
+    // Store original PDF dimensions
+    originalPDFWidth = page.getViewport({ scale: 1 }).width;
+    originalPDFHeight = page.getViewport({ scale: 1 }).height;
+    
+    const viewport = page.getViewport({ scale: displayScale });
     
     canvas.width = viewport.width;
     canvas.height = viewport.height;
@@ -207,28 +242,76 @@
     await page.render({ canvasContext: ctx, viewport }).promise;
   }
 
-  // Helper: clear all dynamic text divs and rebuild from textItems array
-  function syncTextDivs() {
-    // Remove all existing .text divs from container (keep canvas intact)
-    const existingDivs = document.querySelectorAll("#container .text");
-    existingDivs.forEach(div => div.remove());
+  // Clear all text
+  function clearAllText() {
+    const allTextDivs = document.querySelectorAll("#container .text");
+    allTextDivs.forEach(div => div.remove());
+    textItems = [];
+    alert("All text annotations cleared.");
+  }
+
+  // Create input at specific position
+  function createInputAtPosition(x, y, initialValue = "", associatedItem = null) {
+    const existingInput = document.querySelector("#container .edit");
+    if (existingInput) existingInput.remove();
     
-    // Re-create each text element from textItems array
-    textItems.forEach(item => {
-      const div = document.createElement("div");
-      div.className = "text";
-      div.innerText = item.text;
-      div.style.left = item.x + "px";
-      div.style.top = item.y + "px";
-      container.appendChild(div);
-      item.el = div;
-      attachTextEventHandlers(div, item);
-    });
+    let input = document.createElement("input");
+    input.className = "edit";
+    input.style.left = x + "px";
+    input.style.top = y + "px";
+    input.style.width = Math.max(100, (initialValue.length * 10) + 30) + "px";
+    input.value = initialValue;
+    input.style.fontSize = "14px";
+    input.style.padding = "4px 6px";
+    
+    container.appendChild(input);
+    input.focus();
+    input.select();
+    
+    input.onblur = function() {
+      const newValue = input.value.trim();
+      if (newValue !== "") {
+        if (associatedItem) {
+          associatedItem.text = newValue;
+          associatedItem.el.innerText = newValue;
+        } else {
+          createNewTextElement(newValue, x, y);
+        }
+      } else if (associatedItem) {
+        associatedItem.el.remove();
+        const idx = textItems.findIndex(t => t === associatedItem);
+        if (idx !== -1) textItems.splice(idx, 1);
+      }
+      input.remove();
+    };
+    
+    input.onkeypress = function(e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        input.blur();
+      }
+    };
   }
   
-  // Attach drag/dblclick/contextmenu to a text div
+  // Create new text element
+  function createNewTextElement(text, x, y) {
+    if (!text || text === "") return null;
+    
+    let div = document.createElement("div");
+    div.className = "text";
+    div.innerText = text;
+    div.style.left = x + "px";
+    div.style.top = y + "px";
+    container.appendChild(div);
+    
+    let newItem = { text, x, y, el: div };
+    textItems.push(newItem);
+    attachTextEventHandlers(div, newItem);
+    return newItem;
+  }
+  
+  // Attach handlers to text elements
   function attachTextEventHandlers(div, item) {
-    // DRAG (move text)
     div.onmousedown = function(e) {
       e.stopPropagation();
       let offsetX = e.offsetX;
@@ -239,7 +322,6 @@
         let newX = moveEvent.clientX - rect.left - offsetX;
         let newY = moveEvent.clientY - rect.top - offsetY;
         
-        // Clamp to canvas boundaries (optional, keep inside)
         newX = Math.max(0, Math.min(newX, canvas.width - 10));
         newY = Math.max(0, Math.min(newY, canvas.height - 20));
         
@@ -256,164 +338,102 @@
       });
     };
     
-    // DOUBLE CLICK -> edit text
     div.ondblclick = (e) => {
       e.stopPropagation();
       createInputAtPosition(item.x, item.y, item.text, item);
     };
     
-    // RIGHT CLICK -> delete text
     div.oncontextmenu = (e) => {
       e.preventDefault();
       e.stopPropagation();
       div.remove();
-      // remove from array
       const index = textItems.findIndex(t => t === item);
       if (index !== -1) textItems.splice(index, 1);
     };
   }
   
-  // FUNCTION: create input at specific coordinates (x, y) with optional existing text
-  // If associatedItem is provided, we will replace that item after editing.
-  function createInputAtPosition(x, y, initialValue = "", associatedItem = null) {
-    // Remove any lingering input to avoid duplicates
-    const existingInput = document.querySelector("#container .edit");
-    if (existingInput) existingInput.remove();
-    
-    let input = document.createElement("input");
-    input.className = "edit";
-    input.style.left = x + "px";
-    input.style.top = y + "px";
-    input.style.width = Math.max(80, (initialValue.length * 10) + 20) + "px";
-    input.value = initialValue;
-    input.style.fontSize = "14px";
-    
-    container.appendChild(input);
-    input.focus();
-    input.select();
-    
-    // Handle blur: finalize text
-    input.onblur = function() {
-      const newValue = input.value.trim();
-      if (newValue !== "") {
-        if (associatedItem) {
-          // Editing existing item: update text
-          associatedItem.text = newValue;
-          associatedItem.el.innerText = newValue;
-          // keep same coordinates (x,y already same)
-        } else {
-          // brand new text: create permanent text item
-          createNewTextElement(newValue, x, y);
-        }
-      } else if (associatedItem) {
-        // if empty and editing existing -> delete it
-        associatedItem.el.remove();
-        const idx = textItems.findIndex(t => t === associatedItem);
-        if (idx !== -1) textItems.splice(idx, 1);
-      }
-      input.remove();
-    };
-    
-    // Allow Enter key to finalize as well
-    input.onkeypress = function(e) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        input.blur();
-      }
-    };
-  }
-  
-  // Creates a brand new text element and adds to textItems
-  function createNewTextElement(text, x, y) {
-    // avoid duplicates if empty string
-    if (!text || text === "") return;
-    
-    let div = document.createElement("div");
-    div.className = "text";
-    div.innerText = text;
-    div.style.left = x + "px";
-    div.style.top = y + "px";
-    container.appendChild(div);
-    
-    let newItem = { text, x, y, el: div };
-    textItems.push(newItem);
-    attachTextEventHandlers(div, newItem);
-    return newItem;
-  }
-  
-  // ================ CLICK HANDLER ON CANVAS - FIXED PRECISE PLACEMENT ================
+  // Canvas click handler - store last click position
   canvas.addEventListener("click", function(e) {
-    // Get exact click coordinates relative to canvas (accounting for page scale and border)
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;   // canvas physical pixel vs CSS size
+    const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     
     let clickX = (e.clientX - rect.left) * scaleX;
     let clickY = (e.clientY - rect.top) * scaleY;
     
-    // clamp inside canvas boundaries
     clickX = Math.min(Math.max(0, clickX), canvas.width - 5);
     clickY = Math.min(Math.max(0, clickY), canvas.height - 15);
     
-    // Create input field at exact coordinates
+    lastClickPosition = { x: clickX, y: clickY };
     createInputAtPosition(clickX, clickY, "");
   });
   
-  // ================ PDF UPLOAD HANDLER (preserve any existing text after new PDF) ================
-  document.getElementById("fileInput").addEventListener("change", async function(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    pdfFile = file;
-    
-    // Clear existing text items when new PDF loaded? Usually best to reset.
-    // But we ask: retain old session? Typically start fresh. We'll clear all previous text.
-    // However, we can keep if needed but better UX to reset.
-    // clear all textItems and remove divs
-    const allTextDivs = document.querySelectorAll("#container .text");
-    allTextDivs.forEach(div => div.remove());
-    textItems = [];
-    
-    await loadAndRenderPDF(pdfFile);
-  });
-  
-  // Function to render preview if pdfFile is already loaded (used for session reload)
-  async function reloadCurrentPDF() {
-    if (pdfFile) {
-      await loadAndRenderPDF(pdfFile);
-    } else {
-      // no pdf uploaded, show placeholder or alert
-      if (textItems.length > 0 && !pdfFile) {
-        alert("Please upload a PDF first before loading saved text. Text data restored but PDF missing.");
-      }
+  // Insert client name at last click position
+  function insertClientNameAtCursor() {
+    const clientName = document.getElementById("clientName").value;
+    if (!clientName) {
+      alert("Please enter a client name first.");
+      return;
     }
+    if (lastClickPosition.x === 0 && lastClickPosition.y === 0) {
+      alert("Please click on the PDF first to set a position.");
+      return;
+    }
+    createNewTextElement(clientName, lastClickPosition.x, lastClickPosition.y);
   }
   
-  // ================ DOWNLOAD PDF (embed text with correct coordinates) ================
+  // ================ DOWNLOAD PDF with FIXED COORDINATES ================
   async function downloadPDF() {
     if (!pdfFile) {
       alert("❌ Please upload a PDF file first.");
       return;
     }
     
+    if (textItems.length === 0) {
+      if (!confirm("No text annotations added. Download original PDF anyway?")) {
+        return;
+      }
+    }
+    
     try {
-      const { PDFDocument, rgb } = PDFLib;
+      const { PDFDocument, rgb, StandardFonts } = PDFLib;
       const bytes = await pdfFile.arrayBuffer();
       const pdfDoc = await PDFDocument.load(bytes);
       const pages = pdfDoc.getPages();
+      
       if (pages.length === 0) throw new Error("No pages found");
       const firstPage = pages[0];
-      const { height } = firstPage.getSize();
+      const { width, height } = firstPage.getSize();
       
-      // For each text item, draw at correct coordinates
-      // PDF-lib origin is bottom-left, but canvas origin is top-left.
-      // So we convert: y_pdf = pageHeight - item.y
+      // Get a standard font
+      const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      
+      // Calculate scale factor between display and original PDF
+      const scaleX = originalPDFWidth / (canvas.width / displayScale);
+      const scaleY = originalPDFHeight / (canvas.height / displayScale);
+      
+      console.log(`PDF Original: ${originalPDFWidth}x${originalPDFHeight}`);
+      console.log(`Canvas display: ${canvas.width}x${canvas.height}`);
+      console.log(`Scale factor: X=${scaleX}, Y=${scaleY}`);
+      
+      // For each text item, convert screen coordinates to PDF coordinates
       textItems.forEach(item => {
+        // Convert from screen display coordinates to original PDF coordinates
+        // First, convert from display pixels back to original PDF units
+        let pdfX = item.x / displayScale;
+        let pdfY = item.y / displayScale;
+        
+        // PDF coordinate system: origin at bottom-left
+        let pdfYFromBottom = originalPDFHeight - pdfY;
+        
+        console.log(`Text "${item.text}": Screen(${item.x},${item.y}) → PDF(${pdfX}, ${pdfYFromBottom})`);
+        
         firstPage.drawText(item.text, {
-          x: item.x,
-          y: height - item.y,
+          x: pdfX,
+          y: pdfYFromBottom,
           size: 12,
-          color: rgb(0, 0, 0),
-          font: undefined  // default helvetica
+          font: helveticaFont,
+          color: rgb(0, 0, 0)
         });
       });
       
@@ -422,60 +442,74 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "ACORD_edited.pdf";
+      a.download = "ACORD_edited_fixed.pdf";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      
+      alert(`✅ PDF downloaded successfully with ${textItems.length} annotation(s) at correct positions!`);
     } catch (err) {
-      console.error(err);
+      console.error("Download error:", err);
       alert("Error generating PDF: " + err.message);
     }
   }
   
-  // ================ PRINT (canvas preview + annotations) ================
+  // Print function - matches what you see on screen
   function printPDF() {
     if (!canvas || canvas.width === 0) {
       alert("No PDF loaded to print.");
       return;
     }
-    // Create a temporary canvas that includes drawn text annotations on top of PDF background.
-    // We create an offscreen canvas, draw the PDF canvas first, then manually draw each textItem on top.
+    
     const printCanvas = document.createElement("canvas");
     printCanvas.width = canvas.width;
     printCanvas.height = canvas.height;
     const printCtx = printCanvas.getContext("2d");
     
-    // Draw original PDF canvas content
     printCtx.drawImage(canvas, 0, 0);
-    // Draw text items (simulate overlay)
+    
     textItems.forEach(item => {
-      printCtx.font = "bold 14px 'Courier New', monospace";
+      printCtx.font = "500 14px 'Courier New', monospace";
       printCtx.fillStyle = "#000000";
-      printCtx.shadowBlur = 0;
-      printCtx.fillText(item.text, item.x, item.y + 10); // +10 for baseline adjustment
+      printCtx.fillText(item.text, item.x, item.y + 10);
     });
     
-    const win = window.open("");
+    const win = window.open("", "_blank");
     win.document.write(`
       <html>
-        <head><title>Print PDF with Annotations</title>
-        <style>body { margin:0; display:flex; justify-content:center; background:#eee; } img { max-width:100%; height:auto; box-shadow:0 0 5px gray; }</style>
+        <head>
+          <title>Print PDF with Annotations</title>
+          <style>
+            body { margin: 0; display: flex; justify-content: center; background: #eee; }
+            img { max-width: 100%; height: auto; box-shadow: 0 0 5px gray; }
+            @media print {
+              body { margin: 0; background: white; }
+              img { max-width: 100%; box-shadow: none; }
+            }
+          </style>
         </head>
         <body>
           <img src="${printCanvas.toDataURL()}" style="width:100%">
-          <script>window.onload = () => { window.print(); setTimeout(() => window.close(), 500); }<\/script>
+          <script>
+            window.onload = () => {
+              setTimeout(() => {
+                window.print();
+                setTimeout(() => window.close(), 500);
+              }, 250);
+            };
+          <\/script>
         </body>
       </html>
     `);
     win.document.close();
   }
   
-  // ================ SESSION SAVE / LOAD ================
+  // Session save/load
   function saveSession() {
     const sessionData = textItems.map(({ text, x, y }) => ({ text, x, y }));
     localStorage.setItem("acord_pdf_session", JSON.stringify(sessionData));
-    alert("✅ Work saved! Text positions stored.");
+    alert(`✅ Work saved! ${textItems.length} annotation(s) stored.`);
   }
   
   async function loadSession() {
@@ -484,54 +518,47 @@
       alert("No saved session found.");
       return;
     }
+    
     let sessionItems;
     try {
       sessionItems = JSON.parse(saved);
-    } catch(e) { alert("Corrupted data"); return; }
+    } catch(e) {
+      alert("Corrupted data");
+      return;
+    }
     
     if (!pdfFile) {
-      // If no PDF loaded yet, we ask user to upload a PDF first then restore.
-      const confirmLoad = confirm("No PDF currently open. Please upload the original PDF first, then click 'Load Work' again.\n\nWould you like to upload now?");
+      const confirmLoad = confirm("No PDF currently open. Please upload the original PDF first, then click 'Load Work' again.");
       if (confirmLoad) {
         document.getElementById("fileInput").click();
-        // Store the session temporarily in memory until PDF loaded
         window._pendingSession = sessionItems;
-        // Hook a one-time listener after PDF loads
-        const originalListener = document.getElementById("fileInput").onchange;
         const waitForLoad = async (ev) => {
-          if (window._pendingSession) {
-            // reload to render PDF, then restore texts
+          if (window._pendingSession && pdfFile) {
             await loadAndRenderPDF(pdfFile);
-            const toRestore = window._pendingSession;
-            toRestore.forEach(item => {
+            window._pendingSession.forEach(item => {
               createNewTextElement(item.text, item.x, item.y);
             });
             window._pendingSession = null;
-            alert("Session restored on uploaded PDF.");
+            alert(`✅ Session restored with ${sessionItems.length} annotation(s).`);
+            document.getElementById("fileInput").removeEventListener("change", waitForLoad);
           }
-          // remove this temporary listener override
-          document.getElementById("fileInput").removeEventListener("change", waitForLoad);
         };
         document.getElementById("fileInput").addEventListener("change", waitForLoad);
-        return;
-      } else {
-        return;
       }
+      return;
     }
     
-    // Clear existing text items before loading new session
     const existingDivs = document.querySelectorAll("#container .text");
     existingDivs.forEach(div => div.remove());
     textItems = [];
     
-    // restore saved texts
     for (let item of sessionItems) {
       createNewTextElement(item.text, item.x, item.y);
     }
-    alert(`📌 Loaded ${sessionItems.length} text annotations.`);
+    alert(`📌 Loaded ${sessionItems.length} text annotation(s).`);
   }
   
-  // ================ CLIENT SAVE/LOAD (separate) ================
+  // Client save/load
   function saveClient() {
     const clientData = {
       name: document.getElementById("clientName").value,
@@ -550,32 +577,35 @@
     const data = JSON.parse(raw);
     document.getElementById("clientName").value = data.name || "";
     document.getElementById("policy").value = data.policy || "";
-    alert("Client info loaded.");
+    alert("✅ Client info loaded.");
   }
   
-  // Helper: Handle auto-fill text from client fields (optional: insert text at a specific area)
-  // Extra quality: function to add quick text (e.g., from client name to current mouse position), but not required, we keep UI simple.
-  // For convenience, double-click on canvas can be unused. But we have functional.
+  // PDF upload handler
+  document.getElementById("fileInput").addEventListener("change", async function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    pdfFile = file;
+    
+    const allTextDivs = document.querySelectorAll("#container .text");
+    allTextDivs.forEach(div => div.remove());
+    textItems = [];
+    
+    await loadAndRenderPDF(pdfFile);
+    console.log("PDF loaded with dimensions:", originalPDFWidth, "x", originalPDFHeight);
+  });
   
-  // ================ INIT & RESYNC IF NEEDED ================
+  // Initial placeholder
   window.addEventListener("load", () => {
-    // initial empty state
     canvas.width = 800;
     canvas.height = 600;
     ctx.fillStyle = "#f0f2f5";
     ctx.fillRect(0, 0, 800, 600);
     ctx.fillStyle = "#4a627a";
     ctx.font = "16px sans-serif";
-    ctx.fillText("📄 Upload a PDF to start editing", 260, 280);
+    ctx.fillText("📄 Upload a PDF to start editing", 280, 280);
+    ctx.font = "12px sans-serif";
+    ctx.fillText("Click anywhere to add text annotations", 300, 320);
   });
-  
-  // Override any leftover misalignment — ensure dynamic inputs positioning relative to container perfectly.
-  // Also ensure on window resize, text stays relative? canvas size is fixed after load, so fine.
-  // Fix for potential bug: when dragging, container bounding client rect may shift, but we use canvas.getBoundingClientRect inside mousemove, that's robust.
-  
-  // extra fix: ensure that createInputAtPosition correctly adds text when editing with associated item, we already handle
-  // For better UX: the text input now appears exactly where clicked (test with $ sign areas: click near dollar sign, type 7500)
-  console.log("Editor ready — Click precisely where you want the text. The input box appears exactly under cursor.");
 </script>
 
 </body>
