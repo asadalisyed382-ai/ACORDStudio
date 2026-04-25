@@ -376,6 +376,9 @@
       // Get PDF page dimensions
       const { width: pdfWidth, height: pdfHeight } = firstPage.getSize();
       
+      // Embed a standard font
+      const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      
       // Get the scale factor from our display viewport
       // Display viewport is at 1.5x scale
       const displayToPDFScale = 1 / 1.5;
@@ -390,15 +393,12 @@
         // So we need to flip the Y coordinate
         let pdfYFromBottom = pdfHeight - pdfY;
         
-        // Get standard font
-        const font = pdfDoc.getFont(StandardFonts.Helvetica);
-        
         // Draw the text at the converted coordinates
         firstPage.drawText(item.text, {
           x: pdfX,
           y: pdfYFromBottom,
           size: 12,
-          font: font,
+          font: helveticaFont,
           color: rgb(0, 0, 0)
         });
       });
